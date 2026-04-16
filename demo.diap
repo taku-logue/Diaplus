@@ -1,0 +1,51 @@
+mode time
+music ("./demo.mp3")
+
+group ("DIALOGUE+") {
+
+    members: ["yurinya", "ne-ne", "kyon", "yu-na", "yakan", "sappy", "mayuyun", "mana-t"]
+    colors: ["lightpink", "yellow", "green", "blue", "orange", "darkpink", "whiteblue", "parpule"]
+
+    section "intro" {
+        frame @00:00 {
+            "yurinya": (7,0)
+            "ne-ne": (5,0)
+            "kyon": (3,0)
+            "yu-na": (1,0)
+            "yakan": (-1,0)
+            "sappy": (-3,0)
+            "mayuyun":(-5,0)
+            "mana-t": (-7,0)
+        }
+        frame @00:05 {
+            "ne-ne": (5,2)
+            "kyon": (5,-2)
+            "yu-na": (3,0)
+            "yakan": (-3,0)
+            "sappy": (-5,-2)
+            "mayuyun":(-5,2)
+        }
+    }
+    section "1A" {
+        frame @00:10 {
+            "yurinya": (7,2)
+            "ne-ne": (5,-2)
+            "kyon": (3,2)
+            "yu-na": (1,-2)
+            "yakan": (-1,2)
+            "sappy": (-3,-2)
+            "mayuyun":(-5,2)
+            "mana-t": (-7,-2)
+        }
+        frame @00:15 {
+            "yurinya": (3,-2)
+            "ne-ne": (1,-2)
+            "kyon": (-1,-2)
+            "yu-na": (-3,-2)
+            "yakan": (3,2)
+            "sappy": (1,2)
+            "mayuyun":(-1,2)
+            "mana-t": (-3,2)
+        }
+    }
+}

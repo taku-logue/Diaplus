@@ -1,0 +1,20 @@
+mode measure
+
+section "1Aメロ" {
+  frame @1 {
+    "manatsu" : (0, 0)
+    "nene" : (-2, 2)
+    "hitomi" : (2, 2)
+  }
+  frame @2 {
+    "manatsu" : (0, 2)
+  }
+}
+
+section "サビ" {
+  frame @3 {
+    "manatsu" : (0, -2)
+    "nene" : (-3, -1)
+    "hitomi" : (3, -1)
+  }
+}
