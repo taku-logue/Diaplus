@@ -1,20 +1,25 @@
-mode measure
+mode time
 
-section "1Aメロ" {
-  frame @1 {
-    "manatsu" : (0, 0)
-    "nene" : (-2, 2)
-    "hitomi" : (2, 2)
-  }
-  frame @2 {
-    "manatsu" : (0, 2)
-  }
-}
+group ("DIALOGUE+") {
+    members: ["yurinya", "ne-ne", "kyon", "yu-na", "yakan", "sappy", "mayuyun", "mana-t"]
+    colors: ["lightpink", "yellow", "green", "blue", "orange", "deeppink", "lightblue", "purple"]
 
-section "サビ" {
-  frame @3 {
-    "manatsu" : (0, -2)
-    "nene" : (-3, -1)
-    "hitomi" : (3, -1)
-  }
+    section "テスト" {
+        frame @00:00 {
+            "yurinya": (0,0) "ne-ne": (0,0) "kyon": (0,0) "yu-na": (0,0)
+            "yakan": (0,0) "sappy": (0,0) "mayuyun":(0,0) "mana-t": (0,0)
+        }
+        
+        frame @00:05 {
+            transition: 2.0
+            "yurinya": (7,0) "ne-ne": (5,0) "kyon": (3,0) "yu-na": (1,0)
+            "yakan": (-1,0) "sappy": (-3,0) "mayuyun":(-5,0) "mana-t": (-7,0)
+        }
+
+        frame @00:10 {
+            transition: 0.3
+            "yurinya": (3,-2) "ne-ne": (1,-2) "kyon": (-1,-2) "yu-na": (-3,-2)
+            "yakan": (3,2) "sappy": (1,2) "mayuyun":(-1,2) "mana-t": (-3,2)
+        }
+    }
 }

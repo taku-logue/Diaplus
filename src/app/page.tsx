@@ -1,36 +1,27 @@
 "use client";
 
 import { useState, useEffect } from "react";
+// 1. 完全版の文法定義（Grammar）
 import * as ohm from "ohm-js";
 
-// --- Dia+ のデータ構造定義 ---
+// --- 型定義 ---
 interface PositionData {
   name: string;
   position: { x: number; y: number };
 }
-
+interface ShapeData {
+  type: "line";
+  params: Record<string, any>;
+  origin: { x: number; y: number };
+}
 interface FrameData {
   type: "frame";
   id: string;
-  positions: PositionData[];
+  transition?: number;
+  positions?: PositionData[];
+  shape?: ShapeData;
   sectionName?: string;
 }
-
-interface SectionData {
-  type: "section";
-  name: string;
-  frames: FrameData[];
-}
-
-type ElementData = SectionData | FrameData;
-
-// 新しく追加する「メンバー」と「カラー」の中間データ型
-type GroupBodyData =
-  | { type: "members"; data: string[] }
-  | { type: "colors"; data: string[] }
-  | ElementData;
-
-// 最終出力データにグループ情報を追加
 interface DiaPlusData {
   mode: "time" | "measure";
   music?: string;
@@ -40,39 +31,71 @@ interface DiaPlusData {
   frames: FrameData[];
 }
 
-// Ohm.jsの文法定義
+// ✨ 内部ライブラリ（ShapeLibrary）の誕生！
+// 将来的にファイル分割する時は、このブロックだけを切り出せばOKです。
+const ShapeLibrary: Record<string, Function> = {
+  line: (members: string[], params: any, origin: { x: number; y: number }) => {
+    const spacing = params.spacing !== undefined ? params.spacing : 2;
+    // orderが指定されていなければ、1〜メンバー全員分の配列を自動生成
+    const order: number[] = params.order || members.map((_, i) => i + 1);
+
+    const result: PositionData[] = [];
+    const count = order.length;
+
+    order.forEach((memberIndex, i) => {
+      const name = members[memberIndex - 1]; // 1始まりの番号を0始まりの配列に変換
+      if (!name) return; // 存在しない番号は無視
+
+      // originを中心として、左右に展開する数式
+      const offsetX = (i - (count - 1) / 2) * spacing;
+      result.push({
+        name,
+        position: { x: origin.x + offsetX, y: origin.y },
+      });
+    });
+    return result;
+  },
+};
+
+// --- 文法定義 ---
 const grammar = ohm.grammar(`
   Diaplus {
     Program = Mode Music? Group
-
     Mode = "mode" ("time" | "measure")
     Music = "music" "(" String ")"
-
     Group = "group" "(" String ")" "{" GroupBody* "}"
     GroupBody = Members | Colors | Element
-
-    Members = "members" ":" Array
-    Colors = "colors" ":" Array
-    Array = "[" ListOf<String, ","> "]"
+    Members = "members" ":" StringArray
+    Colors = "colors" ":" StringArray
+    StringArray = "[" ListOf<String, ","> "]"
 
     Element = Section | Frame
     Section = "section" String "{" Frame* "}"
-    Frame = "frame" "@" FrameId "{" Formation "}"
+    
+    // ✨ 変更：Shape か Formation を選べる
+    Frame = "frame" "@" FrameId "{" Transition? (Shape | Formation) "}"
+    
+    // ✨ 追加：shape: line(spacing: 2, order: [1,3,2]) : (0,0)
+    Shape = "shape" ":" ShapeName "(" ListOf<ShapeParam, ","> ")" ":" Coordinate
+    ShapeName = "line" // 今回はlineのみ
+    ShapeParam = identifier ":" (NumArray | NumberVal)
+    NumArray = "[" ListOf<NumberVal, ","> "]"
+    NumberVal = number
 
+    Transition = "transition" ":" number
     FrameId = Time | number
-
     Formation = Position*
     Position = MemberName ":" Coordinate
-
     Coordinate = "(" number "," number ")"
     MemberName = String
-
     Time = digit+ ":" digit+
     String = "\\"" (~"\\"" any)* "\\""
     number = "-"? digit+ ("." digit+)?
+    identifier = letter (letter | digit)*
   }
 `);
 
+// --- 変換ルール ---
 const semantics = grammar.createSemantics();
 semantics.addOperation("toJSON", {
   _iter(...children) {
@@ -82,163 +105,128 @@ semantics.addOperation("toJSON", {
     return this.sourceString;
   },
 
-  // プログラム全体の処理
-  Program(mode: ohm.Node, optMusic: ohm.Node, group: ohm.Node) {
-    const parsedGroup = group.toJSON();
-    const musicNode = optMusic.children[0];
-    const musicPath = musicNode ? musicNode.toJSON() : undefined;
-
+  Program(mode, optMusic, group) {
     return {
-      mode: mode.toJSON() as "time" | "measure",
-      music: musicPath,
-      ...parsedGroup, // groupName, members, colors, frames を展開
+      mode: mode.toJSON(),
+      music: optMusic.children[0]?.toJSON(),
+      ...group.toJSON(),
     };
   },
-
-  Music(
-    _music: ohm.Node,
-    _lparen: ohm.Node,
-    path: ohm.Node,
-    _rparen: ohm.Node,
-  ) {
+  Music(_music, _lparen, path, _rparen) {
     return path.toJSON();
   },
-
-  Group(
-    _group: ohm.Node,
-    _lparen: ohm.Node,
-    name: ohm.Node,
-    _rparen: ohm.Node,
-    _lbrace: ohm.Node,
-    body: ohm.Node,
-    _rbrace: ohm.Node,
-  ) {
-    const frames: FrameData[] = [];
+  Group(_group, _lparen, name, _rparen, _lbrace, body, _rbrace) {
+    const frames: any[] = [];
     let members: string[] = [];
     let colors: string[] = [];
-
-    // グループ内の要素を振り分ける
-    body.children.forEach((b: ohm.Node) => {
-      const parsed = b.toJSON() as GroupBodyData;
+    body.children.forEach((b: any) => {
+      const parsed = b.toJSON();
       if (parsed.type === "members") members = parsed.data;
       else if (parsed.type === "colors") colors = parsed.data;
-      else if (parsed.type === "section") {
-        parsed.frames.forEach((f: FrameData) => {
-          frames.push({ ...f, sectionName: parsed.name });
-        });
-      } else if (parsed.type === "frame") {
-        frames.push(parsed);
-      }
+      else if (parsed.type === "section")
+        parsed.frames.forEach((f: any) =>
+          frames.push({ ...f, sectionName: parsed.name }),
+        );
+      else if (parsed.type === "frame") frames.push(parsed);
     });
-
-    // フレームのソート
     frames.sort((a, b) => {
-      const parseTime = (id: string): number => {
-        if (id.includes(":")) {
-          const [min, sec] = id.split(":").map(Number);
-          return min * 60 + sec;
-        }
-        return parseFloat(id);
-      };
-      return parseTime(a.id) - parseTime(b.id);
+      const pT = (id: string) =>
+        id.includes(":")
+          ? id
+              .split(":")
+              .map(Number)
+              .reduce((m, s) => m * 60 + s)
+          : parseFloat(id);
+      return pT(a.id) - pT(b.id);
     });
+    return { groupName: name.toJSON(), members, colors, frames };
+  },
+  Members(_members, _colon, arr) {
+    return { type: "members", data: arr.toJSON() };
+  },
+  Colors(_colors, _colon, arr) {
+    return { type: "colors", data: arr.toJSON() };
+  },
+  StringArray(_l, list, _r) {
+    return list.asIteration().children.map((c: any) => c.toJSON());
+  },
 
+  // ✨ Shape関連の変換処理
+  Shape(_shape, _colon, name, _lparen, params, _rparen, _colon2, coord) {
+    const pList = params.asIteration().children.map((p) => p.toJSON());
     return {
-      groupName: name.toJSON(),
-      members,
-      colors,
-      frames,
+      type: name.sourceString,
+      params: Object.fromEntries(pList.map((p) => [p.key, p.val])),
+      origin: coord.toJSON(),
     };
   },
-
-  Members(_members: ohm.Node, _colon: ohm.Node, array: ohm.Node) {
-    return { type: "members", data: array.toJSON() };
+  ShapeParam(id, _colon, val) {
+    return { key: id.sourceString, val: val.toJSON() };
+  },
+  NumArray(_l, list, _r) {
+    return list.asIteration().children.map((c) => c.toJSON());
+  },
+  NumberVal(num) {
+    return parseFloat(num.sourceString);
   },
 
-  Colors(_colors: ohm.Node, _colon: ohm.Node, array: ohm.Node) {
-    return { type: "colors", data: array.toJSON() };
-  },
-
-  // ListOf を使ったカンマ区切り配列の処理
-  Array(_lbracket: ohm.Node, list: ohm.Node, _rbracket: ohm.Node) {
-    return list.asIteration().children.map((c: ohm.Node) => c.toJSON());
-  },
-
-  // --- 既存のルール ---
-  Mode(_mode: ohm.Node, type: ohm.Node) {
+  Mode(_mode, type) {
     return type.sourceString;
   },
-  Element(elements: ohm.Node) {
-    return elements.toJSON();
+  Element(e) {
+    return e.toJSON();
   },
-  Section(
-    _sec: ohm.Node,
-    name: ohm.Node,
-    _open: ohm.Node,
-    frames: ohm.Node,
-    _close: ohm.Node,
-  ) {
+  Section(_sec, name, _open, frames, _close) {
     return { type: "section", name: name.toJSON(), frames: frames.toJSON() };
   },
-  Frame(
-    _frame: ohm.Node,
-    _at: ohm.Node,
-    id: ohm.Node,
-    _open: ohm.Node,
-    formation: ohm.Node,
-    _close: ohm.Node,
-  ) {
+  Transition(_trans, _colon, num) {
+    return parseFloat(num.sourceString);
+  },
+
+  Frame(_frame, _at, id, _open, optTrans, content, _close) {
+    const trans = optTrans.children[0]?.toJSON();
+    const parsed = content.toJSON();
+    // Shape(オブジェクト)か、Formation(配列)かで振り分ける
     return {
       type: "frame",
       id: id.sourceString,
-      positions: formation.toJSON(),
+      transition: trans,
+      positions: Array.isArray(parsed) ? parsed : undefined,
+      shape: !Array.isArray(parsed) ? parsed : undefined,
     };
   },
-  Formation(positions: ohm.Node) {
-    return positions.toJSON();
+  Formation(pos) {
+    return pos.toJSON();
   },
-  Position(membername: ohm.Node, _colon: ohm.Node, coord: ohm.Node) {
-    return { name: membername.toJSON(), position: coord.toJSON() };
+  Position(name, _colon, coord) {
+    return { name: name.toJSON(), position: coord.toJSON() };
   },
-  Coordinate(
-    _lparen: ohm.Node,
-    x: ohm.Node,
-    _comma: ohm.Node,
-    y: ohm.Node,
-    _rparen: ohm.Node,
-  ) {
+  Coordinate(_l, x, _c, y, _r) {
     return { x: parseFloat(x.sourceString), y: parseFloat(y.sourceString) };
   },
-  String(_rdouble: ohm.Node, chars: ohm.Node, _ldouble: ohm.Node) {
+  String(_ld, chars, _rd) {
     return chars.sourceString;
   },
 });
 
 // メインの画面コンポーネント
 export default function Home() {
-  // ✨ ステージのサイズとスケールを「定数」として一括管理
-  const STAGE_WIDTH = 800; // 横幅を広げて8人入るように！
+  const STAGE_WIDTH = 800;
   const STAGE_HEIGHT = 600;
-  const CENTER_X = STAGE_WIDTH / 2; // 中心は絶対 400 になる
-  const CENTER_Y = STAGE_HEIGHT / 2; // 中心は絶対 300 になる
-  const SCALE = 45; // 8人が綺麗に収まるように少しだけ倍率を調整
-
-  // ... (以降の useState などはそのまま)
+  const CENTER_X = STAGE_WIDTH / 2;
+  const CENTER_Y = STAGE_HEIGHT / 2;
+  const SCALE = 45;
 
   const [fileName, setFileName] = useState("ファイルが選択されていません");
   const [fileContent, setFileContent] = useState("");
   const [errorMsg, setErrorMsg] = useState("");
-
   const [parsedData, setParsedData] = useState<DiaPlusData | null>(null);
-  const [currentFrameIndex, setCurrentFrameIndex] = useState(0);
 
-  // ✨ 追加機能1：再生状態の管理
+  const [currentTime, setCurrentTime] = useState(0);
+  const [maxTime, setMaxTime] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
+  const [richTimeline, setRichTimeline] = useState<any[]>([]);
 
-  // ✨ 追加機能2：全フレームの「累積状態」を保存する配列
-  const [timelineStates, setTimelineStates] = useState<PositionData[][]>([]);
-
-  // ファイル読み込み処理
   const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
@@ -248,7 +236,6 @@ export default function Home() {
     reader.readAsText(file);
   };
 
-  // コンパイル（構文解析）処理
   useEffect(() => {
     if (!fileContent) return;
     const matchResult = grammar.match(fileContent);
@@ -257,8 +244,6 @@ export default function Home() {
       try {
         const data = semantics(matchResult).toJSON() as DiaPlusData;
         setParsedData(data);
-        setCurrentFrameIndex(0);
-        setIsPlaying(false); // 読み込んだ時は停止状態にする
       } catch (err: any) {
         setErrorMsg("変換エラー: " + err.message);
       }
@@ -267,54 +252,163 @@ export default function Home() {
     }
   }, [fileContent]);
 
-  // ✨ 省略ルールの裏側：前のフレームの状態を引き継ぐ処理
+  // ✨ ロジック修正：フレーム間の時間をフルに使ったタイムラインの構築
   useEffect(() => {
-    if (!parsedData) return;
+    if (!parsedData || parsedData.frames.length === 0) return;
 
-    const states: PositionData[][] = [];
+    const parseTime = (id: string) => {
+      if (id.includes(":")) {
+        const [min, sec] = id.split(":").map(Number);
+        return min * 60 + sec;
+      }
+      return parseFloat(id);
+    };
+
+    const timeline: any[] = [];
     const currentState: Record<string, PositionData> = {};
+    let mTime = 0;
+    let lastTime = 0; // 前のフレームの時間を保持
 
+    // ✨ 修正：Shape関数がある場合の座標計算ロジックを追加
     parsedData.frames.forEach((frame) => {
-      // そのフレームで動くメンバーの座標を上書き（動かない人はそのまま残る）
-      frame.positions.forEach((p) => {
-        currentState[p.name] = p;
+      const t = parseTime(frame.id);
+      mTime = Math.max(mTime, t);
+
+      if (frame.shape) {
+        // ✨ ライブラリから関数を呼び出して座標を計算！
+        const calculatedPositions = ShapeLibrary[frame.shape.type](
+          parsedData.members,
+          frame.shape.params,
+          frame.shape.origin,
+        );
+        calculatedPositions.forEach((p: PositionData) => {
+          currentState[p.name] = { ...p };
+        });
+      } else if (frame.positions) {
+        // 従来の手書き指定
+        frame.positions.forEach((p) => {
+          currentState[p.name] = { ...p };
+        });
+      }
+
+      const interval = t - lastTime;
+      const moveDuration =
+        frame.transition !== undefined ? frame.transition : interval;
+
+      timeline.push({
+        endTime: t,
+        startTime: t - moveDuration,
+        duration: moveDuration,
+        positions: JSON.parse(JSON.stringify(currentState)),
+        sectionName: frame.sectionName,
       });
-      // そのフレーム時点での「全メンバーの最新状態」を保存
-      states.push(Object.values(currentState));
+
+      lastTime = t;
     });
 
-    setTimelineStates(states);
+    setRichTimeline(timeline);
+    setMaxTime(mTime);
+    setCurrentTime(0);
+    setIsPlaying(false);
   }, [parsedData]);
 
-  // ✨ 再生ボタンのタイマー処理（動画のような滑らかな動き）
+  // アニメーションループ（requestAnimationFrame）
   useEffect(() => {
-    let interval: NodeJS.Timeout;
-    if (isPlaying && timelineStates.length > 0) {
-      interval = setInterval(() => {
-        setCurrentFrameIndex((prev) => {
-          // 最後のフレームまで来たら自動で停止する
-          if (prev >= timelineStates.length - 1) {
-            setIsPlaying(false);
-            return prev;
-          }
-          return prev + 1; // 次のフレームへ
-        });
-      }, 1000); // 1秒（1000ms）ごとに次のフレームへ進む
-    }
-    return () => clearInterval(interval);
-  }, [isPlaying, timelineStates.length]);
+    let animationFrameId: number;
+    let lastTimestamp = performance.now();
 
-  // 再生ボタンを押した時の処理
-  const togglePlay = () => {
-    // 最後まで進んでいる状態で再生を押したら、最初に戻す
-    if (!isPlaying && currentFrameIndex >= timelineStates.length - 1) {
-      setCurrentFrameIndex(0);
-    }
-    setIsPlaying(!isPlaying);
+    const animate = (now: number) => {
+      if (isPlaying) {
+        const delta = (now - lastTimestamp) / 1000;
+        setCurrentTime((prev) => {
+          const nextTime = prev + delta;
+          if (nextTime >= maxTime) {
+            setIsPlaying(false);
+            return maxTime;
+          }
+          return nextTime;
+        });
+      }
+      lastTimestamp = now;
+      animationFrameId = requestAnimationFrame(animate);
+    };
+
+    animationFrameId = requestAnimationFrame(animate);
+    return () => cancelAnimationFrame(animationFrameId);
+  }, [isPlaying, maxTime]);
+
+  // 座標計算（補間）
+  const getCurrentPositions = () => {
+    if (richTimeline.length === 0 || !parsedData) return [];
+
+    const easeInOut = (t: number) => {
+      t = Math.max(0, Math.min(1, t));
+      return t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+    };
+
+    const result: any[] = [];
+
+    parsedData.members.forEach((member) => {
+      const nextIdx = richTimeline.findIndex((f) => f.endTime >= currentTime);
+
+      if (nextIdx === -1) {
+        result.push(richTimeline[richTimeline.length - 1].positions[member]);
+        return;
+      }
+      if (nextIdx === 0) {
+        result.push(richTimeline[0].positions[member]);
+        return;
+      }
+
+      const nextF = richTimeline[nextIdx];
+      const prevF = richTimeline[nextIdx - 1];
+      const targetPos = nextF.positions[member];
+      const prevPos = prevF.positions[member];
+
+      if (!targetPos || !prevPos) return;
+
+      if (currentTime <= nextF.startTime) {
+        result.push(prevPos);
+      } else {
+        const progress = (currentTime - nextF.startTime) / nextF.duration;
+        const eased = easeInOut(progress);
+
+        result.push({
+          name: member,
+          position: {
+            x:
+              prevPos.position.x +
+              (targetPos.position.x - prevPos.position.x) * eased,
+            y:
+              prevPos.position.y +
+              (targetPos.position.y - prevPos.position.y) * eased,
+          },
+        });
+      }
+    });
+
+    return result;
   };
 
-  // 現在の画面に表示するメンバーの座標リスト
-  const currentPositions = timelineStates[currentFrameIndex] || [];
+  const currentPositions = getCurrentPositions();
+
+  // シークバーの操作性向上：ドラッグ中も値を即座に反映
+  const handleSeek = (e: React.FormEvent<HTMLInputElement>) => {
+    const val = parseFloat(e.currentTarget.value);
+    setIsPlaying(false); // つかんでいる間は再生を止める
+    setCurrentTime(val);
+  };
+
+  const formatTime = (seconds: number) => {
+    const m = Math.floor(seconds / 60);
+    const s = Math.floor(seconds % 60);
+    const ms = Math.floor((seconds % 1) * 100);
+    return `${m.toString().padStart(2, "0")}:${s.toString().padStart(2, "0")}.${ms.toString().padStart(2, "0")}`;
+  };
+
+  const currentFrameObj = [...richTimeline]
+    .reverse()
+    .find((f) => f.endTime <= currentTime);
 
   return (
     <div
@@ -325,7 +419,6 @@ export default function Home() {
         color: "white",
       }}
     >
-      {/* 左半分：エディタ＆情報エリア */}
       <div
         style={{
           flex: 1,
@@ -345,8 +438,24 @@ export default function Home() {
             backgroundColor: "#333",
             border: "1px solid #555",
             borderRadius: "5px",
+            marginBottom: "20px",
           }}
         />
+
+        {parsedData && (
+          <div
+            style={{
+              padding: "15px",
+              backgroundColor: "#2d3748",
+              borderRadius: "5px",
+              fontSize: "14px",
+            }}
+          >
+            <strong>Group:</strong> {parsedData.groupName}
+            <br />
+            <strong>Music:</strong> {parsedData.music || "None"}
+          </div>
+        )}
 
         {errorMsg && (
           <div
@@ -356,14 +465,14 @@ export default function Home() {
               whiteSpace: "pre-wrap",
               backgroundColor: "#3a1c1c",
               padding: "10px",
+              fontSize: "12px",
             }}
           >
             {errorMsg}
           </div>
         )}
 
-        {/* タイムラインコントローラー */}
-        {parsedData && timelineStates.length > 0 && (
+        {parsedData && richTimeline.length > 0 && (
           <div
             style={{
               marginTop: "auto",
@@ -377,63 +486,56 @@ export default function Home() {
                 display: "flex",
                 justifyContent: "space-between",
                 alignItems: "center",
-                marginBottom: "10px",
+                marginBottom: "15px",
               }}
             >
-              <h3>Timeline</h3>
-
-              {/* ✨ 再生・一時停止ボタン */}
               <button
-                onClick={togglePlay}
+                onClick={() => setIsPlaying(!isPlaying)}
                 style={{
                   padding: "10px 20px",
-                  fontSize: "16px",
+                  fontSize: "14px",
                   fontWeight: "bold",
                   backgroundColor: isPlaying ? "#ff4757" : "#2ed573",
                   border: "none",
                   borderRadius: "5px",
                   color: "white",
                   cursor: "pointer",
-                  transition: "background-color 0.2s",
+                  width: "100px",
                 }}
               >
-                {isPlaying ? "⏸ 一時停止" : "▶ 再生"}
+                {isPlaying ? "PAUSE" : "PLAY"}
               </button>
+              <div style={{ fontSize: "20px", fontFamily: "monospace" }}>
+                {formatTime(currentTime)}
+              </div>
             </div>
 
             <input
               type="range"
               min="0"
-              max={timelineStates.length - 1}
-              value={currentFrameIndex}
-              onChange={(e) => {
-                setCurrentFrameIndex(parseInt(e.target.value));
-                setIsPlaying(false); // 手動で動かした時は一時停止する
-              }}
-              style={{ width: "100%", cursor: "pointer" }}
+              max={maxTime}
+              step="0.001" // ✨ 1ミリ秒単位で細かく制御
+              value={currentTime}
+              onInput={handleSeek}
+              style={{ width: "100%", cursor: "grab" }}
             />
 
             <div
               style={{
                 textAlign: "center",
                 marginTop: "10px",
-                fontSize: "18px",
+                color: "#00d2ff",
                 fontWeight: "bold",
               }}
             >
-              <span style={{ color: "#00d2ff", marginRight: "10px" }}>
-                {parsedData.frames[currentFrameIndex]?.sectionName
-                  ? `[${parsedData.frames[currentFrameIndex].sectionName}]`
-                  : ""}
-              </span>
-              {parsedData.mode === "measure" ? "小節" : "時間"} @
-              {parsedData.frames[currentFrameIndex]?.id}
+              {currentFrameObj?.sectionName
+                ? `[${currentFrameObj.sectionName}]`
+                : "---"}
             </div>
           </div>
         )}
       </div>
 
-      {/* 右半分：ステージ */}
       <div
         style={{
           flex: 1,
@@ -453,7 +555,6 @@ export default function Home() {
             borderRadius: "10px",
           }}
         >
-          {/* ✨ センターライン（絶対に中心になる計算） */}
           <line
             x1={CENTER_X}
             y1="0"
@@ -473,34 +574,23 @@ export default function Home() {
 
           {currentPositions.map((member: any) => {
             if (!member || !member.position) return null;
-
-            const memberIndex = parsedData?.members?.indexOf(member.name) ?? -1;
-            const circleColor =
-              memberIndex !== -1 && parsedData?.colors?.[memberIndex]
-                ? parsedData.colors[memberIndex]
+            const mIdx = parsedData?.members?.indexOf(member.name) ?? -1;
+            const color =
+              mIdx !== -1 && parsedData?.colors?.[mIdx]
+                ? parsedData.colors[mIdx]
                 : "#8e44ad";
-
-            // ✨ メンバーの座標も、絶対的な中心点（CENTER）から計算する！
-            const screenX = CENTER_X + member.position.x * SCALE;
-            const screenY = CENTER_Y - member.position.y * SCALE;
 
             return (
               <g
                 key={member.name}
-                transform={`translate(${screenX}, ${screenY})`}
-                style={{ transition: "transform 1s ease-in-out" }}
+                transform={`translate(${CENTER_X + member.position.x * SCALE}, ${CENTER_Y - member.position.y * SCALE})`}
               >
-                <circle
-                  r="15"
-                  fill={circleColor}
-                  stroke="#fff"
-                  strokeWidth="2"
-                />
+                <circle r="15" fill={color} stroke="#fff" strokeWidth="2" />
                 <text
                   y="-22"
                   fill="white"
                   textAnchor="middle"
-                  fontSize="14"
+                  fontSize="12"
                   fontWeight="bold"
                 >
                   {member.name}
