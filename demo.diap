@@ -1,21 +1,14 @@
-mode time
-music ("./demo.mp3")
+mode measure
+bpm 140
+offset 5.034
+youtube ("v=90NEq0crq-Y") 
 
-group ("DIALOGUE+") {
-    members: ["yurinya", "ne-ne", "kyon", "yu-na", "yakan", "sappy", "mayuyun", "mana-t"]
-    colors: ["lightpink", "yellow", "green", "blue", "orange", "deeppink", "lightblue", "purple"]
-
-    section "ライブラリテスト" {
-        frame @00:00 {
-            shape: line(spacing: 2) : (0, 0)
-        }
-
-        frame @00:02 {
-            shape: line(spacing: 1.5, order: [1, 2, 3, 4]) : (0, 3)
-        }
-
-        frame @00:04 {
-            shape: line(spacing: 3, order: [8, 7, 6, 5]) : (0, -3)
-        }
+stage (group = "DIALOGUE+", song = "BPMエラー検証") {
+    members: ["A"]
+    colors: ["red"]
+    section "テスト" {
+        frame @1:1 { line(order=[1]) : (0, 0) }
+        frame @2:1 { line(order=[1]) : (4, 0) }
+        frame @4:1 { line(order=[1]) : (-2, 0) }
     }
 }
