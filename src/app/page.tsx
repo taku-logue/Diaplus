@@ -1,7 +1,5 @@
 "use client";
-
-import { useState, useEffect } from "react";
-// 1. 完全版の文法定義（Grammar）
+import { useState, useEffect, useRef } from "react";
 import * as ohm from "ohm-js";
 
 // --- 型定義 ---
@@ -210,6 +208,7 @@ semantics.addOperation("toJSON", {
 });
 
 // メインの画面コンポーネント
+// メインの画面コンポーネント
 export default function Home() {
   const STAGE_WIDTH = 800;
   const STAGE_HEIGHT = 600;
@@ -252,7 +251,6 @@ export default function Home() {
     }
   }, [fileContent]);
 
-  // ✨ ロジック修正：フレーム間の時間をフルに使ったタイムラインの構築
   useEffect(() => {
     if (!parsedData || parsedData.frames.length === 0) return;
 
@@ -267,15 +265,13 @@ export default function Home() {
     const timeline: any[] = [];
     const currentState: Record<string, PositionData> = {};
     let mTime = 0;
-    let lastTime = 0; // 前のフレームの時間を保持
+    let lastTime = 0;
 
-    // ✨ 修正：Shape関数がある場合の座標計算ロジックを追加
     parsedData.frames.forEach((frame) => {
       const t = parseTime(frame.id);
       mTime = Math.max(mTime, t);
 
       if (frame.shape) {
-        // ✨ ライブラリから関数を呼び出して座標を計算！
         const calculatedPositions = ShapeLibrary[frame.shape.type](
           parsedData.members,
           frame.shape.params,
@@ -285,7 +281,6 @@ export default function Home() {
           currentState[p.name] = { ...p };
         });
       } else if (frame.positions) {
-        // 従来の手書き指定
         frame.positions.forEach((p) => {
           currentState[p.name] = { ...p };
         });
@@ -312,7 +307,7 @@ export default function Home() {
     setIsPlaying(false);
   }, [parsedData]);
 
-  // アニメーションループ（requestAnimationFrame）
+  // ✨ 純粋なタイマー駆動のメインループ（Audio依存を完全削除）
   useEffect(() => {
     let animationFrameId: number;
     let lastTimestamp = performance.now();
@@ -392,10 +387,10 @@ export default function Home() {
 
   const currentPositions = getCurrentPositions();
 
-  // シークバーの操作性向上：ドラッグ中も値を即座に反映
+  // ✨ Audio依存を削除したシーク操作
   const handleSeek = (e: React.FormEvent<HTMLInputElement>) => {
     const val = parseFloat(e.currentTarget.value);
-    setIsPlaying(false); // つかんでいる間は再生を止める
+    setIsPlaying(false);
     setCurrentTime(val);
   };
 
@@ -513,8 +508,8 @@ export default function Home() {
             <input
               type="range"
               min="0"
-              max={maxTime}
-              step="0.001" // ✨ 1ミリ秒単位で細かく制御
+              max={maxTime} // ✨ 純粋なmaxTimeに戻しました
+              step="0.001"
               value={currentTime}
               onInput={handleSeek}
               style={{ width: "100%", cursor: "grab" }}
